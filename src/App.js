@@ -1,11 +1,27 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Search, Sparkles, ExternalLink, LoaderCircle, ArrowUpRight, Layers3, CircleDollarSign, ImageOff, RotateCw } from 'lucide-react';
+import { Search, Sparkles, ExternalLink, LoaderCircle, ArrowUpRight, Layers3, CircleDollarSign, ImageOff } from 'lucide-react';
 
 const CATALOG = 'https://api.tcgdex.net/v2/pt-br';
-const currency = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
+const PRICES = 'https://api.pokemontcg.io/v2/cards';
+const FX = 'https://api.frankfurter.dev/v2/rate';
+const brl = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
+const sourceMoney = (value, code) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: code }).format(value);
 const imageFor = (card, size = 'high') => card?.image ? `${card.image}/${size}.webp` : '';
 const cardTotal = card => card?.set?.cardCount?.official || card?.set?.cardCount?.total || '';
-const finishName = value => String(value || 'Acabamento não informado').replace(/reverse\s*foil/i, 'Reverse foil').replace(/holo/i, 'Foil');
+
+function getMarketPrices(card) {
+  const rows = [];
+  const tcg = card?.tcgplayer?.prices || {};
+  const names = { normal: 'Normal', holofoil: 'Foil', reverseHolofoil: 'Reverse foil', '1stEditionNormal': 'Normal · 1ª edição', '1stEditionHolofoil': 'Foil · 1ª edição', unlimitedHolofoil: 'Foil · ilimitada', unlimitedNormal: 'Normal · ilimitada' };
+  Object.entries(tcg).forEach(([variant, values]) => {
+    const value = values?.market ?? values?.mid ?? values?.directLow;
+    if (Number.isFinite(Number(value)) && Number(value) > 0) rows.push({ source: 'TCGplayer', variant: names[variant] || variant, value: Number(value), currency: 'USD', url: card.tcgplayer?.url });
+  });
+  const market = card?.cardmarket?.prices || {};
+  const euro = market.trendPrice ?? market.averageSellPrice ?? market.lowPrice;
+  if (Number.isFinite(Number(euro)) && Number(euro) > 0) rows.push({ source: 'Cardmarket', variant: 'Tendência geral', value: Number(euro), currency: 'EUR', url: card.cardmarket?.url });
+  return rows;
+}
 
 function CardResult({ card, selected, onSelect }) {
   return <button className={`card-result ${selected ? 'selected' : ''}`} onClick={onSelect}>
@@ -15,52 +31,16 @@ function CardResult({ card, selected, onSelect }) {
   </button>;
 }
 
-function offerPrice(offer) {
-  const raw = offer.price ?? offer.value ?? offer.amount;
-  if (typeof raw === 'number') return raw;
-  if (typeof raw === 'string') return Number(raw.replace(/[^\d,.-]/g, '').replace(/\.(?=\d{3}(?:\D|$))/g, '').replace(',', '.'));
-  return NaN;
-}
-
-function normalizeOffers(payload) {
-  const roots = Array.isArray(payload) ? payload : payload?.items || payload?.results || payload?.data || [];
-  const offers = [];
-  const visit = (obj, depth = 0) => {
-    if (!obj || depth > 4) return;
-    if (Array.isArray(obj)) { obj.forEach(entry => visit(entry, depth + 1)); return; }
-    if (typeof obj !== 'object') return;
-    const price = offerPrice(obj);
-    if (Number.isFinite(price) && price > 0) {
-      offers.push({
-        price,
-        finish: finishName(obj.finish || obj.variant || obj.foilType || obj.extrasCode),
-        seller: obj.seller || obj.sellerName || obj.store || 'Vendedor da Liga Pokémon',
-        condition: obj.condition || obj.cardCondition || '',
-        language: obj.language || obj.lang || 'Português',
-        url: obj.url || obj.listingUrl || obj.productUrl || obj.href || '',
-        quantity: obj.quantity || obj.stock || null
-      });
-      return;
-    }
-    Object.entries(obj).forEach(([key, value]) => {
-      if (['offers', 'listings', 'prices', 'products', 'items', 'results', 'data'].includes(key)) visit(value, depth + 1);
-    });
-  };
-  roots.forEach(entry => visit(entry));
-  return offers;
-}
-
 function App() {
   const [number, setNumber] = useState('');
   const [cards, setCards] = useState([]);
   const [selectedId, setSelectedId] = useState('');
   const [loading, setLoading] = useState(false);
-  const [loadingOffers, setLoadingOffers] = useState(false);
+  const [loadingPrices, setLoadingPrices] = useState(false);
   const [error, setError] = useState('');
-  const [offersError, setOffersError] = useState('');
-  const [offers, setOffers] = useState([]);
-  const [configured, setConfigured] = useState(true);
-  const [finish, setFinish] = useState('Todos');
+  const [priceError, setPriceError] = useState('');
+  const [marketPrices, setMarketPrices] = useState([]);
+  const [rates, setRates] = useState({});
   const selected = cards.find(card => card.id === selectedId) || cards[0];
 
   async function search(event) {
@@ -70,7 +50,7 @@ function App() {
     const value = valuePart.trim();
     const total = totalPart?.trim();
     if (!value) return;
-    setLoading(true); setError(''); setOffers([]); setCards([]); setSelectedId('');
+    setLoading(true); setError(''); setMarketPrices([]); setCards([]); setSelectedId('');
     try {
       const params = new URLSearchParams({ localId: `eq:${value}` });
       const response = await fetch(`${CATALOG}/cards?${params}`);
@@ -91,27 +71,45 @@ function App() {
   useEffect(() => {
     if (!selected) return;
     let cancelled = false;
-    setLoadingOffers(true); setOffersError(''); setOffers([]); setFinish('Todos');
-    fetch('/api/liga', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: selected.name, number: selected.localId, set: selected.set?.name || '' })
-    }).then(async response => {
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data.error || 'Não foi possível consultar a Liga Pokémon.');
-      if (cancelled) return;
-      setConfigured(data.configured !== false);
-      setOffers(normalizeOffers(data.items || data.offers || []));
-      if (data.configured === false) setOffersError('A busca ao vivo está pronta. Adicione APIFY_TOKEN nas variáveis do projeto Vercel para ativar os preços.');
-      else if (!normalizeOffers(data.items || data.offers || []).length) setOffersError('Nenhum anúncio com preço legível retornado para esta impressão. Tente conferir a numeração ou abrir a Liga Pokémon.');
-    }).catch(e => { if (!cancelled) setOffersError(e.message || 'Falha ao carregar ofertas.'); })
-      .finally(() => { if (!cancelled) setLoadingOffers(false); });
+    setLoadingPrices(true); setPriceError(''); setMarketPrices([]); setRates({});
+    (async () => {
+      try {
+        const query = new URLSearchParams({ q: `id:"${selected.id}"`, pageSize: '10' });
+        let response = await fetch(`${PRICES}?${query}`);
+        if (!response.ok) throw new Error('A fonte de preços está temporariamente indisponível.');
+        let data = await response.json();
+        let match = data.data?.find(card => card.id === selected.id);
+        if (!match) {
+          const byNumber = new URLSearchParams({ q: `number:"${selected.localId}"`, pageSize: '100' });
+          response = await fetch(`${PRICES}?${byNumber}`);
+          if (response.ok) {
+            data = await response.json();
+            match = data.data?.find(card => card.number === selected.localId && card.set?.id === selected.set?.id);
+          }
+        }
+        if (!match) throw new Error('Não encontrei esta impressão nas fontes internacionais gratuitas.');
+        const prices = getMarketPrices(match);
+        if (!prices.length) throw new Error('Ainda não há preços publicados para esta impressão.');
+        const currencies = [...new Set(prices.map(price => price.currency))];
+        const ratePairs = await Promise.all(currencies.map(async code => {
+          const result = await fetch(`${FX}/${code.toLowerCase()}/brl`);
+          if (!result.ok) throw new Error('A conversão cambial está temporariamente indisponível.');
+          return [code, await result.json()];
+        }));
+        if (cancelled) return;
+        setMarketPrices(prices);
+        setRates(Object.fromEntries(ratePairs.map(([code, data]) => [code, { value: data.rate, date: data.date }])));
+        if (match.tcgplayer?.url) match._sourceUrls = { tcgplayer: match.tcgplayer.url, cardmarket: match.cardmarket?.url };
+      } catch (e) {
+        if (!cancelled) setPriceError(e.message || 'Falha ao carregar preços.');
+      } finally { if (!cancelled) setLoadingPrices(false); }
+    })();
     return () => { cancelled = true; };
-  }, [selected?.id]);
+  }, [selected?.id, selected?.localId, selected?.set?.id]);
 
-  const finishes = useMemo(() => ['Todos', ...new Set(offers.map(offer => offer.finish))], [offers]);
-  const visibleOffers = useMemo(() => offers.filter(offer => finish === 'Todos' || offer.finish === finish), [offers, finish]);
-  const cheapest = offers.length ? Math.min(...offers.map(offer => offer.price)) : null;
+  const cheapest = marketPrices.length ? Math.min(...marketPrices.map(price => price.value * (rates[price.currency]?.value || 0))) : null;
+  const fxDate = Object.values(rates).map(rate => rate.date).sort().at(-1);
+  const sourceUrls = marketPrices.reduce((urls, price) => ({ ...urls, [price.source]: price.url || urls[price.source] }), {});
   const ligaUrl = 'https://www.ligapokemon.com.br/';
 
   return <main className="app-shell">
@@ -119,7 +117,7 @@ function App() {
     <section className="intro">
       <div className="eyebrow"><Sparkles size={14}/> UM OLHAR MAIS CLARO SOBRE SUA COLEÇÃO</div>
       <h1>Encontre a carta.<br/><em>Descubra o valor.</em></h1>
-      <p>Pesquise pela numeração, escolha a impressão e veja ofertas reais da Liga Pokémon em reais.</p>
+      <p>Pesquise pela numeração, escolha a impressão e compare referências internacionais convertidas para reais.</p>
     </section>
     <form className="search-panel" onSubmit={search}>
       <label htmlFor="card-number">NÚMERO IMPRESSO NA CARTA</label>
@@ -135,27 +133,24 @@ function App() {
         {selected && <article className="detail-card">
           <div className="detail-top"><div><span className="section-kicker">IMPRESSÃO SELECIONADA</span><h2>{selected.name}</h2><p>{selected.set?.name} <span className="bullet">·</span> {selected.localId}/{cardTotal(selected) || '?'}</p></div><span className="rarity">{selected.rarity || 'Pokémon TCG'}</span></div>
           <div className="card-showcase"><img src={imageFor(selected)} alt={selected.name}/></div>
-          <div className="metadata"><div><span>COLEÇÃO</span><strong>{selected.set?.name || '—'}</strong></div><div><span>LANÇAMENTO</span><strong>{selected.set?.releaseDate || '—'}</strong></div><div><span>ACABAMENTOS</span><strong>{offers.length ? finishes.length - 1 : 'A verificar'}</strong></div></div>
-          <div className="price-heading"><div><CircleDollarSign size={18}/><h3>Ofertas na Liga Pokémon</h3></div><span>VALORES EM REAIS · BRL</span></div>
-          <p className="price-caption">Anúncios ativos de vendedores. Os preços podem variar conforme estado, idioma e estoque.</p>
-          {loadingOffers && <div className="offer-state"><LoaderCircle className="spin" size={17}/> Consultando anúncios da Liga…</div>}
-          {!loadingOffers && offersError && <div className={`offer-state ${configured ? '' : 'setup'}`}>{offersError}</div>}
-          {!loadingOffers && offers.length > 0 && <>
-            <div className="price-summary"><div><span>MENOR ANÚNCIO</span><strong>{currency.format(cheapest)}</strong></div><div><span>OFERTAS</span><strong>{offers.length}</strong></div><a href={ligaUrl} target="_blank" rel="noreferrer">Abrir Liga <ArrowUpRight size={14}/></a></div>
-            <div className="finish-filters" aria-label="Filtrar acabamento">{finishes.map(item => <button type="button" key={item} className={finish === item ? 'active' : ''} onClick={() => setFinish(item)}>{item}</button>)}</div>
-            <div className="price-list">{visibleOffers.slice(0, 30).map((offer, index) => <div className="price-row" key={offer.seller + offer.price + index}>
-              <span className="price-source"><strong>{offer.finish}</strong><small>{offer.seller}{offer.condition ? ` · ${offer.condition}` : ''}{offer.quantity ? ` · qtd. ${offer.quantity}` : ''}</small></span>
-              <span className="offer-value">{currency.format(offer.price)}{offer.url && <a href={offer.url} target="_blank" rel="noreferrer" aria-label="Abrir anúncio"><ArrowUpRight size={13}/></a>}</span>
+          <div className="metadata"><div><span>COLEÇÃO</span><strong>{selected.set?.name || '—'}</strong></div><div><span>LANÇAMENTO</span><strong>{selected.set?.releaseDate || '—'}</strong></div><div><span>RARIDADE</span><strong>{selected.rarity || '—'}</strong></div></div>
+          <div className="price-heading"><div><CircleDollarSign size={18}/><h3>Referências de mercado</h3></div><span>CONVERTIDAS PARA BRL</span></div>
+          <p className="price-caption">TCGplayer (EUA) e Cardmarket (Europa). Conversão cambial diária; não representa preço praticado no Brasil.</p>
+          {loadingPrices && <div className="offer-state"><LoaderCircle className="spin" size={17}/> Buscando preços e cotação…</div>}
+          {!loadingPrices && priceError && <div className="offer-state setup">{priceError}</div>}
+          {!loadingPrices && marketPrices.length > 0 && <>
+            <div className="price-summary"><div><span>MENOR REFERÊNCIA</span><strong>{cheapest != null ? brl.format(cheapest) : '—'}</strong></div><div><span>ATUALIZADO</span><strong>{fxDate || '—'}</strong></div><a href={ligaUrl} target="_blank" rel="noreferrer">Liga Pokémon <ArrowUpRight size={14}/></a></div>
+            <div className="price-list">{marketPrices.map((price, index) => <div className="price-row" key={price.source + price.variant + index}>
+              <span className="price-source"><strong>{price.source} · {price.variant}</strong><small>{sourceMoney(price.value, price.currency)} · câmbio de {rates[price.currency]?.date || '—'}</small></span>
+              <span className="offer-value">{rates[price.currency] ? brl.format(price.value * rates[price.currency].value) : '—'}{price.url && <a href={price.url} target="_blank" rel="noreferrer" aria-label={`Abrir ${price.source}`}><ArrowUpRight size={13}/></a>}</span>
             </div>)}</div>
-            {!visibleOffers.length && <div className="no-prices">Não há ofertas para este acabamento nesta busca.</div>}
           </>}
-          {selected.rarity && /art/i.test(selected.rarity) && <div className="full-art-note">Esta impressão é classificada como {selected.rarity}. “Full art” identifica a arte/raridade da impressão; o acabamento foil é informado separadamente nos anúncios.</div>}
-          <div className="price-footnote"><a href={ligaUrl} target="_blank" rel="noreferrer">Liga Pokémon <ExternalLink size={12}/></a><span>Preços anunciados, não histórico de vendas.</span></div>
+          <div className="price-footnote"><a href={ligaUrl} target="_blank" rel="noreferrer">Consultar Liga Pokémon <ExternalLink size={12}/></a><span>Cotação de referência; não inclui frete ou taxas.</span></div>
         </article>}
       </div>
     </section>}
-    {!loading && !error && cards.length === 0 && <section className="empty-state"><div className="empty-icon"><ImageOff size={22}/></div><strong>Comece pela numeração da carta</strong><span>Encontre a impressão e compare anúncios ativos na Liga Pokémon.</span></section>}
-    <footer><span>CATÁLOGO PT-BR VIA TCGDEX · OFERTAS VIA LIGA POKÉMON</span><span>Feito para quem coleciona <span className="footer-star">✳</span></span></footer>
+    {!loading && !error && cards.length === 0 && <section className="empty-state"><div className="empty-icon"><ImageOff size={22}/></div><strong>Comece pela numeração da carta</strong><span>Encontre a impressão e compare referências de mercado em reais.</span></section>}
+    <footer><span>CATÁLOGO PT-BR VIA TCGDEX · PREÇOS VIA TCGPLAYER / CARDMARKET</span><span>Feito para quem coleciona <span className="footer-star">✳</span></span></footer>
   </main>;
 }
 
