@@ -105,11 +105,10 @@ function App() {
       } finally { if (!cancelled) setLoadingPrices(false); }
     })();
     return () => { cancelled = true; };
-  }, [selected?.id, selected?.localId, selected?.set?.id]);
+  }, [selected]);
 
   const cheapest = marketPrices.length ? Math.min(...marketPrices.map(price => price.value * (rates[price.currency]?.value || 0))) : null;
   const fxDate = Object.values(rates).map(rate => rate.date).sort().at(-1);
-  const sourceUrls = marketPrices.reduce((urls, price) => ({ ...urls, [price.source]: price.url || urls[price.source] }), {});
   const ligaUrl = 'https://www.ligapokemon.com.br/';
 
   return <main className="app-shell">
