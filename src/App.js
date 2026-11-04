@@ -21,6 +21,33 @@ function getPrices(card) {
   return prices;
 }
 
+function variantPrices(card, variant) {
+  const prices = [];
+  const tcg = card.tcgplayer?.prices || {};
+  const keys = {
+    normal: [['normal', 'Normal'], ['1stEditionNormal', 'Normal · 1ª edição']],
+    foil: [['holofoil', 'Foil'], ['1stEditionHolofoil', 'Foil · 1ª edição'], ['unlimitedHolofoil', 'Foil · ilimitada']],
+    reverse: [['reverseHolofoil', 'Reverse foil']],
+    fullart: [['holofoil', 'Full art · foil'], ['normal', 'Full art · normal'], ['reverseHolofoil', 'Full art · reverse foil']]
+  }[variant] || [];
+
+  keys.forEach(([key, label]) => {
+    const data = tcg[key];
+    const value = data?.market ?? data?.mid ?? data?.directLow;
+    if (value != null) prices.push({ source: 'TCGplayer', variant: label, value, currency: 'USD', url: card.tcgplayer?.url });
+  });
+
+  const market = card.cardmarket?.prices || {};
+  [['averageSellPrice', 'Média de venda · sem separar acabamento'], ['trendPrice', 'Tendência · sem separar acabamento'], ['lowPrice', 'Menor preço · sem separar acabamento']].forEach(([key, label]) => {
+    if (market[key] != null) prices.push({ source: 'Cardmarket', variant: label, value: market[key], currency: 'EUR', url: card.cardmarket?.url });
+  });
+  return prices;
+}
+
+function isFullArt(card) {
+  return /ultra|secret|rainbow|illustration|hyper|shiny/i.test(card.rarity || '');
+}
+
 function CardResult({ card, selected, onSelect }) {
   const prices = getPrices(card);
   return <button className={`card-result ${selected ? 'selected' : ''}`} onClick={onSelect}>
@@ -30,13 +57,22 @@ function CardResult({ card, selected, onSelect }) {
   </button>;
 }
 
-function PriceTable({ card }) {
-  const prices = getPrices(card);
-  if (!prices.length) return <div className="no-prices">Ainda não há preço disponível para esta impressão nas fontes conectadas.</div>;
-  return <div className="price-list">{prices.map((price, index) => <div className="price-row" key={price.source + price.variant + index}>
-    <span className="price-source"><strong>{price.source}</strong><small>{price.variant}</small></span>
-    <strong className="price-value">{money(price.value, price.currency)}</strong>
-  </div>)}</div>;
+function PriceTable({ cards, variant, loading, error }) {
+  if (loading) return <div className="price-status"><LoaderCircle className="spin" size={17}/> Buscando impressões Full Art…</div>;
+  if (error) return <div className="no-prices">{error}</div>;
+  const printings = (variant === 'fullart' ? cards.filter(isFullArt) : cards).map(card => ({
+    card,
+    prices: variantPrices(card, variant)
+  })).filter(item => item.prices.length);
+
+  if (!printings.length) return <div className="no-prices">Não há preços publicados para esta variante nas fontes conectadas.</div>;
+  return <div className="variant-prices">{printings.map(({ card, prices }) => <section className="variant-printing" key={card.id}>
+    {variant === 'fullart' && <div className="printing-label">{card.name} · {card.set?.name} · {card.number} <small>{card.rarity}</small></div>}
+    {prices.map((price, index) => <div className="price-row" key={price.source + price.variant + index}>
+      <span className="price-source"><strong>{price.source}</strong><small>{price.variant}</small></span>
+      <span className="price-value">{money(price.value, price.currency)}{price.url && <a href={price.url} target="_blank" rel="noreferrer" aria-label={`Ver no ${price.source}`}><ArrowUpRight size={13}/></a>}</span>
+    </div>)}
+  </section>)}</div>;
 }
 
 export default function App() {
@@ -45,6 +81,11 @@ export default function App() {
   const [selectedId, setSelectedId] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [activeVariant, setActiveVariant] = useState('normal');
+  const [fullArtCards, setFullArtCards] = useState([]);
+  const [loadingFullArt, setLoadingFullArt] = useState(false);
+  const [fullArtError, setFullArtError] = useState('');
+  const [loadedFullArtFor, setLoadedFullArtFor] = useState('');
   const selected = cards.find(card => card.id === selectedId) || cards[0];
 
   async function search(event) {
@@ -54,7 +95,7 @@ export default function App() {
     const value = valuePart.trim();
     const total = totalPart?.trim();
     if (!value) return;
-    setLoading(true); setError(''); setCards([]); setSelectedId('');
+    setLoading(true); setError(''); setCards([]); setSelectedId(''); setActiveVariant('normal');
     try {
       const response = await fetch(`${API}?${new URLSearchParams({ q: `number:"${value.replaceAll('"', '')}"`, pageSize: '100', orderBy: 'set.releaseDate' })}`);
       if (!response.ok) throw new Error(response.status === 429 ? 'Limite de consultas atingido. Tente novamente em alguns minutos.' : 'Não foi possível consultar o catálogo agora.');
@@ -65,6 +106,25 @@ export default function App() {
     } catch (e) {
       setError(e.message || 'Falha ao buscar cartas. Verifique sua conexão e tente de novo.');
     } finally { setLoading(false); }
+  }
+
+  async function chooseVariant(variant) {
+    setActiveVariant(variant);
+    if (variant !== 'fullart' || !selected || loadedFullArtFor === selected.id) return;
+    setLoadingFullArt(true);
+    setFullArtError('');
+    try {
+      const query = new URLSearchParams({ q: `name:"${selected.name.replaceAll('"', '')}"`, pageSize: '250' });
+      const response = await fetch(`${API}?${query}`);
+      if (!response.ok) throw new Error(response.status === 429 ? 'Limite de consultas atingido. Tente novamente em alguns minutos.' : 'Não foi possível consultar as impressões Full Art.');
+      const data = await response.json();
+      const related = (data.data || []).filter(card => card.name === selected.name && isFullArt(card));
+      setFullArtCards(related);
+      setLoadedFullArtFor(selected.id);
+      if (!related.length) setFullArtError('Não encontrei uma impressão Full Art deste Pokémon na busca atual.');
+    } catch (e) {
+      setFullArtError(e.message || 'Não foi possível carregar as impressões Full Art.');
+    } finally { setLoadingFullArt(false); }
   }
 
   const ligaUrl = 'https://www.ligapokemon.com.br/';
@@ -86,13 +146,17 @@ export default function App() {
     {!loading && cards.length > 0 && <section className="results-section">
       <div className="section-heading"><div><span className="section-kicker">RESULTADOS</span><h2>{cards.length} {cards.length === 1 ? 'impressão encontrada' : 'impressões encontradas'}</h2></div><span className="result-count">Pokémon TCG</span></div>
       <div className="results-layout">
-        <div className="results-list">{cards.map(card => <CardResult key={card.id} card={card} selected={card.id === selected?.id} onSelect={() => setSelectedId(card.id)}/>)}</div>
+        <div className="results-list">{cards.map(card => <CardResult key={card.id} card={card} selected={card.id === selected?.id} onSelect={() => { setSelectedId(card.id); setActiveVariant('normal'); setLoadedFullArtFor(''); setFullArtCards([]); setFullArtError(''); }}/>)}</div>
         {selected && <article className="detail-card">
           <div className="detail-top"><div><span className="section-kicker">DETALHES DA IMPRESSÃO</span><h2>{selected.name}</h2><p>{selected.set?.name} <span className="bullet">·</span> {selected.number}/{selected.set?.printedTotal || selected.set?.total}</p></div><span className="rarity">{selected.rarity || 'Pokémon TCG'}</span></div>
           <div className="card-showcase"><img src={selected.images?.large || selected.images?.small} alt={selected.name}/></div>
           <div className="metadata"><div><span>COLEÇÃO</span><strong>{selected.set?.name || '—'}</strong></div><div><span>LANÇAMENTO</span><strong>{selected.set?.releaseDate || '—'}</strong></div><div><span>ILUSTRADOR</span><strong>{selected.artist || '—'}</strong></div></div>
           <div className="price-heading"><div><CircleDollarSign size={18}/><h3>Preços por variante</h3></div><span>VALORES NA MOEDA ORIGINAL</span></div>
-          <PriceTable card={selected}/>
+          <div className="variant-tabs" role="tablist" aria-label="Variantes de preço">
+            {[['normal','Normal'],['fullart','Full Art'],['foil','Foil'],['reverse','Reverse foil']].map(([key,label]) => <button key={key} type="button" role="tab" aria-selected={activeVariant === key} className={activeVariant === key ? 'active' : ''} onClick={() => chooseVariant(key)}>{label}</button>)}
+          </div>
+          <p className="variant-note">{activeVariant === 'fullart' ? 'Full Art mostra impressões especiais do mesmo Pokémon; cada uma tem sua própria numeração.' : 'Os valores são os publicados pelas fontes internacionais. Cardmarket não separa todos os acabamentos.'}</p>
+          <PriceTable cards={activeVariant === 'fullart' ? fullArtCards : selected ? [selected] : []} variant={activeVariant} loading={activeVariant === 'fullart' && loadingFullArt} error={activeVariant === 'fullart' ? fullArtError : ''}/>
           <div className="price-footnote">Preços de referência internacionais; USD e EUR não são convertidos para reais. Valores e disponibilidade podem variar.</div>
           <div className="source-links">{selected.tcgplayer?.url && <a href={selected.tcgplayer.url} target="_blank" rel="noreferrer">Ver no TCGplayer <ArrowUpRight size={14}/></a>}{selected.cardmarket?.url && <a href={selected.cardmarket.url} target="_blank" rel="noreferrer">Ver no Cardmarket <ArrowUpRight size={14}/></a>}<a href={ligaUrl} target="_blank" rel="noreferrer">Consultar Liga Pokémon <ExternalLink size={13}/></a></div>
         </article>}
