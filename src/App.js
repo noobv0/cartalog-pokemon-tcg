@@ -8,7 +8,7 @@ const brl = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' 
 const sourceMoney = (value, code) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: code }).format(value);
 const imageFor = (card, size = 'high') => card?.image ? `${card.image}/${size}.webp` : '';
 const cardTotal = card => card?.set?.cardCount?.official || card?.set?.cardCount?.total || '';
-const normalizeLocalId = value => { const id = String(value || '').trim().toUpperCase(); return /^\\d+$/.test(id) ? String(Number(id)) : id; };
+const normalizeLocalId = value => { const id = String(value || '').trim().toUpperCase(); return /^\d+$/.test(id) ? String(Number(id)) : id; };
 
 function getMarketPrices(card) {
   const rows = [];
