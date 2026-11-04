@@ -8,6 +8,7 @@ const brl = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' 
 const sourceMoney = (value, code) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: code }).format(value);
 const imageFor = (card, size = 'high') => card?.image ? `${card.image}/${size}.webp` : '';
 const cardTotal = card => card?.set?.cardCount?.official || card?.set?.cardCount?.total || '';
+const normalizeLocalId = value => { const id = String(value || '').trim().toUpperCase(); return /^\\d+$/.test(id) ? String(Number(id)) : id; };
 
 function getMarketPrices(card) {
   const rows = [];
@@ -52,7 +53,7 @@ function App() {
     if (!value) return;
     setLoading(true); setError(''); setMarketPrices([]); setCards([]); setSelectedId('');
     try {
-      const params = new URLSearchParams({ localId: `eq:${value}` });
+      const params = new URLSearchParams({ localId: value });
       const response = await fetch(`${CATALOG}/cards?${params}`);
       if (!response.ok) throw new Error('Não foi possível consultar o catálogo agora.');
       const briefCards = await response.json();
@@ -60,7 +61,7 @@ function App() {
         const detail = await fetch(`${CATALOG}/cards/${encodeURIComponent(item.id)}`);
         return detail.ok ? detail.json() : null;
       }));
-      const matches = details.filter(card => card && (!total || String(cardTotal(card)) === total));
+      const matches = details.filter(card => card && normalizeLocalId(card.localId) === normalizeLocalId(value) && (!total || String(cardTotal(card)) === total));
       setCards(matches);
       if (!matches.length) setError('Nenhuma carta encontrada com essa numeração. Tente, por exemplo, 25, 25/198 ou TG01.');
     } catch (e) {
