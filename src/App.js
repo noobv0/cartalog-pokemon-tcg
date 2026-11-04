@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Search, Sparkles, ExternalLink, LoaderCircle, ArrowUpRight, Layers3, CircleDollarSign, ImageOff } from 'lucide-react';
 
 const CATALOG = 'https://api.tcgdex.net/v2/pt-br';
