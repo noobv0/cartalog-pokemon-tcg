@@ -49,15 +49,19 @@ export default function App() {
 
   async function search(event) {
     event?.preventDefault();
-    const value = number.trim();
+    const input = number.trim();
+    const [valuePart, totalPart] = input.split('/');
+    const value = valuePart.trim();
+    const total = totalPart?.trim();
     if (!value) return;
     setLoading(true); setError(''); setCards([]); setSelectedId('');
     try {
-      const response = await fetch(`${API}?${new URLSearchParams({ q: `number:"${value.replaceAll('"', '')}"`, pageSize: '30', orderBy: 'set.releaseDate' })}`);
+      const response = await fetch(`${API}?${new URLSearchParams({ q: `number:"${value.replaceAll('"', '')}"`, pageSize: '100', orderBy: 'set.releaseDate' })}`);
       if (!response.ok) throw new Error(response.status === 429 ? 'Limite de consultas atingido. Tente novamente em alguns minutos.' : 'Não foi possível consultar o catálogo agora.');
       const data = await response.json();
-      setCards(data.data || []);
-      if (!data.data?.length) setError('Nenhuma carta encontrada com essa numeração. Confira se digitou apenas o número (ex.: 25 ou TG01).');
+      const matches = (data.data || []).filter(card => !total || String(card.set?.printedTotal || card.set?.total) === total);
+      setCards(matches);
+      if (!matches.length) setError('Nenhuma carta encontrada com essa numeração. Confira se digitou apenas o número (ex.: 25, 25/198 ou TG01).');
     } catch (e) {
       setError(e.message || 'Falha ao buscar cartas. Verifique sua conexão e tente de novo.');
     } finally { setLoading(false); }
