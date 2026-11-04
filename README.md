@@ -1,6 +1,6 @@
 # Cartalog — Pokémon TCG
 
-Aplicação inicial para buscar uma carta pela numeração, escolher entre impressões em coleções diferentes e consultar preços por variante.
+Catálogo de cartas Pokémon em português brasileiro, com busca por numeração e consulta de anúncios ativos da Liga Pokémon em reais (BRL).
 
 ## Rodando localmente
 
@@ -9,19 +9,23 @@ npm install
 npm start
 ```
 
-## Dados e preços
+Para ativar a consulta de preços localmente, execute o projeto com o runtime de Vercel (`vercel dev`) e defina `APIFY_TOKEN` no ambiente. Em produção, adicione `APIFY_TOKEN` nas variáveis de ambiente do projeto Vercel e faça um novo deploy.
 
-O catálogo, imagens, variantes e preços internacionais vêm da [Pokémon TCG API](https://docs.pokemontcg.io/). A busca não exige chave de API, mas está sujeita aos limites públicos do serviço. Os valores são exibidos na moeda publicada pela fonte: TCGplayer em USD e Cardmarket em EUR.
+## Fontes e preços
 
-A Liga Pokémon é uma referência brasileira útil, mas não encontrei uma API pública documentada para integrar preços em reais nesta primeira versão. Por isso, o app oferece o link para consulta e não apresenta preços internacionais como se fossem valores brasileiros.
+- Catálogo, impressões e imagens: [TCGdex](https://tcgdex.dev), conjunto pt-BR.
+- Ofertas: anúncios ativos da [Liga Pokémon](https://www.ligapokemon.com.br/), consultados pelo ator de terceiros [Apify Liga Pokémon Scraper](https://apify.com/gio21/ligapokemon-scraper).
+- Valores exibidos em reais, conforme os anúncios retornados. São preços pedidos por vendedores, não histórico de vendas concluídas.
+- O ator Apify não é oficial nem afiliado à Liga Pokémon. Consulte a página do ator para tarifas atualizadas. O Cartalog limita cada busca a um produto e no máximo 20 anúncios retornados; cada consulta pode gerar cobrança na conta Apify.
 
-## Escopo atual
+## Variantes
 
-- Busca por número da carta, inclusive numerações promocionais como `TG01`.
-- Seleção entre impressões que compartilham a mesma numeração.
-- Imagem, coleção, raridade, ilustrador e variantes com preço disponível.
-- Links diretos às fontes quando fornecidos pela API.
+O catálogo lista cada impressão e raridade, incluindo artes especiais. O acabamento (por exemplo, Normal, Foil ou Reverse Foil) é filtrado conforme informado nos anúncios encontrados. Full art representa uma categoria de arte/raridade da impressão, não um acabamento intercambiável.
+
+## Configuração Vercel
+
+Adicione `APIFY_TOKEN` como variável de ambiente **server-side** no projeto `cartalog-pokemon-tcg`. Nunca coloque esse token em variáveis `REACT_APP_*` ou no código-fonte.
 
 ## Stack
 
-React, Create React App, Tailwind CSS e lucide-react.
+React, Create React App, Vercel Functions e lucide-react.
